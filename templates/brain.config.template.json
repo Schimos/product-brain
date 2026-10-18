@@ -68,7 +68,12 @@
   "tasks": {
     "dir": "tasks",
     "key_regex": "^PROJ-\\d+$",
-    "drafts": "drafts"
+    "drafts": "drafts",
+    "tracker": { "kind": "jira", "url": "https://jira.example.com", "project": "PROJ" },
+    "branch": "task/{key_lower}",
+    "areas": { "backend-api": "BE", "web-app": "FE" },
+    "locales": ["en"],
+    "conventions": "docs/runbooks/task-conventions.md"
   },
   "portal": {
     "data": "docs/dashboard/hub-portal.json",
