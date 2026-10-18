@@ -48,6 +48,7 @@
     }
   },
   "approvals": { "out": "docs/approvals" },
+  "live_update": { "portal_url": "https://jira.example.com/servicedesk/customer/portal/8", "request_type": "Production Deployment", "request_type_id": 66, "component": "Acme", "require": ["epic_approval", "merge_request", "release_notes"] },
   "roadmap": {
     "out": "docs/roadmap/delivery-roadmap.html",
     "facts": "docs/roadmap/.roadmap-facts.json",
