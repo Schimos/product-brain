@@ -44,6 +44,7 @@ Create before the user has seen the filled-in form and said yes.
 | `live_update.request_type_id` | optional: its id (the number in `.../portal/8/create/66`), for a direct link to the form | pick by name |
 | `live_update.component` | the exact Component/s option to choose — which product this release is for | none — ask (Step 5) |
 | `live_update.components` | optional `{repo-id: component}` override for the primary repo | — |
+| `live_update.require` | optional list of `epic_approval`, `release_notes`, `merge_request` that must exist before the request may be filed (a hard gate) | `[]` — nothing is required |
 | `releases.primary_repo`, `releases.production_branch`, `releases.release_branch_regex`, `releases.tag_regex` | which release is "the current one" | see the script |
 | `releases.out`, `approvals.out` | where release-notes and epic-approval folders live | none — a missing one is a warning |
 
@@ -59,14 +60,31 @@ Read-only; it does not touch Jira or a browser. Prints one JSON object: the rele
 `version_label`, `source`, `branch_state`), what epic-approval and release-notes produced, the merge
 request (`merge_request.url`, from `gh` / `glab`), `attachments[]` (local files that must be
 uploaded), `links`, the `request` block (`portal_url`, `request_type`, `create_url`, `requests_url`,
-`component`, `marker`, `suggested_summary`, `missing_keys`) and `warnings[]`. Show the user every
+`component`, `marker`, `suggested_summary`, `missing_keys`), the `gate` block (`require`, `missing`,
+`satisfied`, and `pipeline`: the steps in release order, each `done` or not) and `warnings[]`. Show the user every
 warning. Exit 2 means the release could not be identified — ask which branch or version, and re-run
 with `--branch` / `--version`.
 
-### 2. Say what is missing before filing anything
+### 2. Walk the release's steps, in order
 
-If `epic_approval.exists` or `release_notes.exists` is false, or there is no merge request, say so
-plainly and let the user choose: run the missing skill first, or file with what exists. Never file
+Show the user the checklist from `gate.pipeline`, in release order — a release is reviewed, then
+merged, then described, then ticketed:
+
+1. **epic-approval** — the approval reports (before the merge).
+2. **merge request** — the release branch's MR/PR (`open-release-mr.py`, step 9 of release-notes).
+3. **release-notes** — the release-notes folder (after the merge and tag, so it describes what shipped).
+4. **the request** — this skill.
+
+For each step that is not `done`, offer to do it now instead of just reporting it: run the
+`epic-approval` skill, open the MR (the plan first, `--create` only after a yes), run the
+`release-notes` skill. Take one step at a time, re-run Step 1 after each, and come back here. A
+release that has no tag yet cannot have final release notes; say so rather than writing them early.
+
+**The gate.** When `gate.require` is not empty, those artifacts are mandatory: while `gate.missing`
+is not empty, **do not fill in the form, and do not offer to file with what exists** — walk the missing
+steps, and stop if the user declines. Say that the hub requires them and that `live_update.require`
+is the key that says so. When `gate.require` is empty, nothing is mandatory: say what is missing and
+let the user choose between doing the step first and filing with what exists. Either way, never file
 an empty request silently.
 
 ### 3. Portal, and request type

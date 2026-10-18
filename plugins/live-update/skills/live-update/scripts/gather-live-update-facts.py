@@ -25,6 +25,8 @@ Keys read from brain.config.json (all optional; a missing one becomes a warning,
   live_update.request_type_id           optional: its id (the number in .../portal/8/create/66), for a direct link
   live_update.component                 the exact Component/s option to pick (asked for by the skill when unset)
   live_update.components                optional {repo-id: component} override for the primary repo
+  live_update.require                   optional list of "epic_approval", "release_notes", "merge_request":
+                                        the request may not be filed until each one exists (a hard gate)
 
     gather-live-update-facts.py [--hub DIR] [--repo ID] [--branch NAME | --version LABEL]
                                 [--client-note-url URL] [--approval-url URL] [--host github|gitlab]
@@ -358,6 +360,26 @@ def request_facts(cfg, repo_id, release, warnings):
             "missing_keys": missing}
 
 
+def gate_facts(cfg, epic, notes, mr, warnings):
+    """What must exist before the request may be filed, and what is still missing."""
+    present = {"epic_approval": bool(epic["exists"]), "release_notes": bool(notes["exists"]),
+               "merge_request": bool(mr["url"])}
+    raw = cfg.get("live_update.require") or []
+    if not isinstance(raw, list):
+        warnings.append("live_update.require must be a list of artifact names; ignoring it")
+        raw = []
+    unknown = [r for r in raw if r not in present]
+    if unknown:
+        warnings.append(f"live_update.require has unknown names {unknown}; "
+                        f"known: {', '.join(present)}")
+    require = [r for r in raw if r in present]
+    missing = [r for r in require if not present[r]]
+    # the order a release really goes in: reviewed, then merged, then described
+    pipeline = [{"step": s, "done": present[s], "required": s in require}
+                for s in ("epic_approval", "merge_request", "release_notes")]
+    return {"require": require, "missing": missing, "satisfied": not missing, "pipeline": pipeline}
+
+
 # ------------------------------------------------------------------------ main
 
 def run(args):
@@ -404,6 +426,7 @@ def run(args):
                   "client_note_artifact_url": notes["client_note_artifact_url"]},
         "attachments": epic_files + notes_files,
         "request": request_facts(cfg, repo_id, release, warnings),
+        "gate": gate_facts(cfg, epic, notes, mr, warnings),
         "warnings": warnings,
     }
 

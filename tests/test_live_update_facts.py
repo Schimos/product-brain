@@ -5,6 +5,7 @@ Run: python3 tests/test_live_update_facts.py
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -101,6 +102,11 @@ def main():
         check(any("epic-approval" in w for w in f["warnings"]) and any("release-notes" in w for w in f["warnings"]),
               "missing artifacts warned about")
 
+        g = f["gate"]
+        check(g["require"] == [] and g["satisfied"] and g["missing"] == [], "no gate configured: nothing required")
+        check([s["step"] for s in g["pipeline"]] == ["epic_approval", "merge_request", "release_notes"]
+              and not any(s["done"] for s in g["pipeline"]), "pipeline in release order, nothing done yet")
+
         # 2. epic-approval only: several dated runs, newest wins; another release's folder ignored
         ea = hub / "docs/approvals"
         write(ea / "2026-09-10 - release.1.5.0/api.md")
@@ -171,6 +177,23 @@ def main():
         check(f["epic_approval"]["exists"] and f["release_notes"]["exists"], "artifacts found by version")
         rc, f = run(hub)
         check(f["merge_request"]["found_via"] == "no release branch to look up", "no mr lookup without a branch")
+
+        # 5b. the gate: required artifacts missing -> not satisfied, in release order
+        config["live_update"]["require"] = ["release_notes", "epic_approval", "merge_request", "nonsense"]
+        (hub / "brain.config.json").write_text(json.dumps(config))
+        shutil.rmtree(hub / "docs/releases/1.5.0 - 2026-09-28")
+        rc, f = run(hub, "--no-vcs-host")
+        g = f["gate"]
+        check(g["require"] == ["release_notes", "epic_approval", "merge_request"]
+              and g["missing"] == ["release_notes", "merge_request"] and not g["satisfied"],
+              f"gate lists what is missing: {g}")
+        check({s["step"]: s["done"] for s in g["pipeline"]} == {"epic_approval": True, "merge_request": False,
+                                                                 "release_notes": False}, "pipeline reflects what exists")
+        check(any("unknown names" in w for w in f["warnings"]), "unknown require name warned about")
+        config["live_update"]["require"] = ["epic_approval"]
+        (hub / "brain.config.json").write_text(json.dumps(config))
+        rc, f = run(hub, "--no-vcs-host")
+        check(f["gate"]["satisfied"] and f["gate"]["missing"] == [], "gate satisfied when the required artifact exists")
 
         # 6. jira keys missing -> null plus warnings, never a guess
         del config["live_update"]
