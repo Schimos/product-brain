@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect the facts needed to file one Jira ticket for a release.
+"""Collect the facts needed to file one Jira Service Desk request for a release (live-update only).
 
 Read-only: it reads git and hub files, and asks `gh` / `glab` (never `create`) for the release's
 merge/pull request. It makes NO Jira call, opens no browser and reads no credential - the skill's
@@ -20,11 +20,11 @@ Keys read from brain.config.json (all optional; a missing one becomes a warning,
   releases.tag_regex             enables the tag fallback
   releases.out                   release-notes folders: "<version> - <date>"
   approvals.out                  epic-approval folders: "<date> - <release branch>"
-  jira.portal_url                the customer portal, e.g. https://jira.example.com/servicedesk/customer/portal/8
-  jira.request_type              the request type's name on the portal, e.g. "Production Deployment"
-  jira.request_type_id           optional: its id (the number in .../portal/8/create/66), for a direct link
-  jira.component                 the exact Component/s option to pick (asked for by the skill when unset)
-  jira.components                optional {repo-id: component} override for the primary repo
+  live_update.portal_url                the customer portal, e.g. https://jira.example.com/servicedesk/customer/portal/8
+  live_update.request_type              the request type's name on the portal, e.g. "Production Deployment"
+  live_update.request_type_id           optional: its id (the number in .../portal/8/create/66), for a direct link
+  live_update.component                 the exact Component/s option to pick (asked for by the skill when unset)
+  live_update.components                optional {repo-id: component} override for the primary repo
 
     gather-live-update-facts.py [--hub DIR] [--repo ID] [--branch NAME | --version LABEL]
                                 [--client-note-url URL] [--approval-url URL] [--host github|gitlab]
@@ -332,13 +332,13 @@ def merge_request_facts(repo, branch, host, skip):
     return info
 
 
-def jira_facts(cfg, repo_id, release, warnings):
-    portal = (cfg.get("jira.portal_url") or "").rstrip("/")
-    request_type = cfg.get("jira.request_type")
-    type_id = cfg.get("jira.request_type_id")
-    component = (cfg.get("jira.components") or {}).get(repo_id) or cfg.get("jira.component")
-    missing = [k for k, v in (("jira.portal_url", portal), ("jira.request_type", request_type or type_id),
-                              ("jira.component", component)) if not v]
+def request_facts(cfg, repo_id, release, warnings):
+    portal = (cfg.get("live_update.portal_url") or "").rstrip("/")
+    request_type = cfg.get("live_update.request_type")
+    type_id = cfg.get("live_update.request_type_id")
+    component = (cfg.get("live_update.components") or {}).get(repo_id) or cfg.get("live_update.component")
+    missing = [k for k, v in (("live_update.portal_url", portal), ("live_update.request_type", request_type or type_id),
+                              ("live_update.component", component)) if not v]
     for key in missing:
         warnings.append(f"{key} is not set - ask the user, then offer to save it in brain.config.json")
     site = ""
@@ -403,7 +403,7 @@ def run(args):
                   "epic_approval_page_url": epic["page_url"],
                   "client_note_artifact_url": notes["client_note_artifact_url"]},
         "attachments": epic_files + notes_files,
-        "jira": jira_facts(cfg, repo_id, release, warnings),
+        "request": request_facts(cfg, repo_id, release, warnings),
         "warnings": warnings,
     }
 

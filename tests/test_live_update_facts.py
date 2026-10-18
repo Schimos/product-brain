@@ -76,7 +76,7 @@ def main():
             "releases": {"primary_repo": "api", "production_branch": "main", "out": "docs/releases",
                          "tag_regex": r"^v\d+\.\d+\.\d+$"},
             "approvals": {"out": "docs/approvals"},
-            "jira": {"portal_url": "https://jira.example.com/servicedesk/customer/portal/8/",
+            "live_update": {"portal_url": "https://jira.example.com/servicedesk/customer/portal/8/",
                      "request_type": "Production Deployment", "request_type_id": 66, "component": "Acme"},
         }
         (hub / "brain.config.json").write_text(json.dumps(config))
@@ -89,7 +89,7 @@ def main():
         check(not f["epic_approval"]["exists"] and not f["release_notes"]["exists"], "nothing exists")
         check(f["attachments"] == [], "no attachments yet")
         check(f["merge_request"]["found_via"] == "skipped (--no-vcs-host)", "no gh call")
-        j = f["jira"]
+        j = f["request"]
         check(j["marker"] == "[release:1.5.0]"
               and j["suggested_summary"] == "[release:1.5.0] Production deployment - Acme 1.5.0",
               "dedupe marker and summary")
@@ -173,22 +173,22 @@ def main():
         check(f["merge_request"]["found_via"] == "no release branch to look up", "no mr lookup without a branch")
 
         # 6. jira keys missing -> null plus warnings, never a guess
-        del config["jira"]
+        del config["live_update"]
         (hub / "brain.config.json").write_text(json.dumps(config))
         rc, f = run(hub, "--no-vcs-host")
-        check(f["jira"]["portal_url"] is None and f["jira"]["component"] is None and f["jira"]["create_url"] is None
-              and f["jira"]["missing_keys"] == ["jira.portal_url", "jira.request_type", "jira.component"],
+        check(f["request"]["portal_url"] is None and f["request"]["component"] is None and f["request"]["create_url"] is None
+              and f["request"]["missing_keys"] == ["live_update.portal_url", "live_update.request_type", "live_update.component"],
               "missing jira keys reported")
         check(sum("is not set - ask the user" in w for w in f["warnings"]) == 3, "each missing key warned about")
 
         # 7. per-repo component override
-        config["jira"] = {"portal_url": "https://jira.example.com/servicedesk/customer/portal/8",
+        config["live_update"] = {"portal_url": "https://jira.example.com/servicedesk/customer/portal/8",
                           "request_type": "Production Deployment", "component": "Default",
                           "components": {"api": "Bugloos"}}
         (hub / "brain.config.json").write_text(json.dumps(config))
         rc, f = run(hub, "--no-vcs-host")
-        check(f["jira"]["component"] == "Bugloos" and f["jira"]["create_url"] is None
-              and f["jira"]["missing_keys"] == [], "per-repo component override; no id means no direct link")
+        check(f["request"]["component"] == "Bugloos" and f["request"]["create_url"] is None
+              and f["request"]["missing_keys"] == [], "per-repo component override; no id means no direct link")
 
         # 8. nothing identifies a release -> a person must decide
         bare = tmp / "hub2"

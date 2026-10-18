@@ -13,7 +13,8 @@ team's Jira Service Desk customer portal — the same form a person fills in by 
 type, write a summary and description, choose the Component/s (which product the release is for), add
 attachments, press Create.
 
-It uses **no Jira MCP connector and no API token.** The agent drives the portal in a browser the user is
+It is **only for this request.** Every other Jira ticket (issues, bugs, scope checks) keeps its own flow;
+nothing here changes it. It uses **no Jira MCP connector and no API token.** The agent drives the portal in a browser the user is
 already signed in to, so the request is raised as that user.
 
 **English only.** Every question and every ticket text is in English, whatever language the user
@@ -38,11 +39,11 @@ Create before the user has seen the filled-in form and said yes.
 
 | Key | Used for | Default |
 |---|---|---|
-| `jira.portal_url` | the customer portal, e.g. `https://jira.example.com/servicedesk/customer/portal/8` | none — ask (Step 3) |
-| `jira.request_type` | the request type's name on the portal, e.g. `Production Deployment` | none — ask (Step 3) |
-| `jira.request_type_id` | optional: its id (the number in `.../portal/8/create/66`), for a direct link to the form | pick by name |
-| `jira.component` | the exact Component/s option to choose — which product this release is for | none — ask (Step 5) |
-| `jira.components` | optional `{repo-id: component}` override for the primary repo | — |
+| `live_update.portal_url` | the customer portal, e.g. `https://jira.example.com/servicedesk/customer/portal/8` | none — ask (Step 3) |
+| `live_update.request_type` | the request type's name on the portal, e.g. `Production Deployment` | none — ask (Step 3) |
+| `live_update.request_type_id` | optional: its id (the number in `.../portal/8/create/66`), for a direct link to the form | pick by name |
+| `live_update.component` | the exact Component/s option to choose — which product this release is for | none — ask (Step 5) |
+| `live_update.components` | optional `{repo-id: component}` override for the primary repo | — |
 | `releases.primary_repo`, `releases.production_branch`, `releases.release_branch_regex`, `releases.tag_regex` | which release is "the current one" | see the script |
 | `releases.out`, `approvals.out` | where release-notes and epic-approval folders live | none — a missing one is a warning |
 
@@ -57,7 +58,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/gather-live-update-facts.py" [--branch <nam
 Read-only; it does not touch Jira or a browser. Prints one JSON object: the release (`branch`,
 `version_label`, `source`, `branch_state`), what epic-approval and release-notes produced, the merge
 request (`merge_request.url`, from `gh` / `glab`), `attachments[]` (local files that must be
-uploaded), `links`, the `jira` block (`portal_url`, `request_type`, `create_url`, `requests_url`,
+uploaded), `links`, the `request` block (`portal_url`, `request_type`, `create_url`, `requests_url`,
 `component`, `marker`, `suggested_summary`, `missing_keys`) and `warnings[]`. Show the user every
 warning. Exit 2 means the release could not be identified — ask which branch or version, and re-run
 with `--branch` / `--version`.
@@ -70,8 +71,8 @@ an empty request silently.
 
 ### 3. Portal, and request type
 
-If `jira.portal_url` or the request type is null, ask the user for the portal address and the request
-type's name, and offer to write them into `brain.config.json` under `jira`. Never guess either, and
+If `request.portal_url` or `request.request_type` is null, ask the user for the portal address and the request
+type's name, and offer to write them into `brain.config.json` under `live_update`. Never guess either, and
 never copy them from another hub.
 
 ### 4. Open the portal and look for an existing request
@@ -80,21 +81,21 @@ Use a browser the user is already signed in to Jira on — Claude in Chrome (the
 natural choice; the built-in browser pane works too once the user has signed in there themselves. If a
 page asks for a login, **stop and ask the user to sign in**; never type credentials.
 
-Open `jira.requests_url` (the user's own requests) and search it for `jira.marker`. If a request
+Open `request.requests_url` (the user's own requests) and search it for `request.marker`. If a request
 carrying the marker exists, **do not create another**: report its key and link, and stop. If newer
 artifacts exist than it has (a later `epic_approval.report_date`, a release-notes folder that was
 missing), offer to add a comment with them, and only do it after a yes.
 
 ### 5. Fill in the form — without pressing Create
 
-Open `jira.create_url` when it is set; otherwise open `jira.portal_url` and choose the request type
-named `jira.request_type`. Check the page heading shows that request type. Leave "Raise this request
+Open `request.create_url` when it is set; otherwise open `request.portal_url` and choose the request type
+named `request.request_type`. Check the page heading shows that request type. Leave "Raise this request
 on behalf of" as it is. Then:
 
-- **Summary:** `jira.suggested_summary`.
-- **Component/s:** open the dropdown and choose `jira.component` exactly as written. If it is null, or
+- **Summary:** `request.suggested_summary`.
+- **Component/s:** open the dropdown and choose `request.component` exactly as written. If it is null, or
   not among the options, read the options off the page, ask the user which product(s) this release is
-  for, and offer to save the answer as `jira.component` (or `jira.components` per repo). Never guess a
+  for, and offer to save the answer as `live_update.component` (or `live_update.components` per repo). Never guess a
   component.
 - **Description**, plain text, one item per line: the merge request link and the published
   release-note and epic-approval page links (only those that are non-null), the names of the files
