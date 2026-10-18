@@ -113,9 +113,9 @@ def version_of(text):
 
 def rel(hub, path):
     try:
-        return str(Path(path).resolve().relative_to(hub))
+        return Path(path).resolve().relative_to(Path(hub).resolve()).as_posix()
     except ValueError:
-        return str(path)
+        return Path(path).as_posix()
 
 
 # ------------------------------------------------------------------------ finding the release
