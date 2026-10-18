@@ -190,13 +190,27 @@ generated README's heading and the dashboard/release-notes wordmark to agree —
 | `data` | Yes | — | `"docs/dashboard/hub-portal.json"` — the hand-maintained data file; start one with `scripts/init-data.py`. Contract: `skills/hub-portal/references/data-contract.md` |
 | `out` | No | `".work/hub-portal"` | where `index.html` and `md/*.json` are built (git-ignored; never committed) |
 | `specs_dir` | No | `roadmap.specs_dir`, then `releases.specs_dir`; a clear error if none is set | `"docs/specs"` — one folder or one `.md` file per spec |
-| `tasks` | No | — (no task section) | `{ "dir": "tasks", "key_regex": "^PROJ-\\d+$" }` |
+| `tasks` | No | — | The older place for the top-level `tasks` block below; read only when that block is absent |
 | `source` | No | — (no "Open in …" button) | `{ "blob": "https://github.com/acme/hub/blob/main/", "tree": "https://github.com/acme/hub/tree/main/", "branch": "main" }` |
 | `calendar` | No | Gregorian only | `"jalali"` — adds the Jalali date beside the Gregorian one |
 
 Workers and the skills themselves never edit `brain.config.json` — a missing or wrong key stops
 the script with the key's name and an example value; the user (or Claude, on their behalf) edits
 the file.
+
+### `tasks` (read by `pb check` and `hub-portal`)
+
+Work smaller than a spec, one folder per ticket. Without this block a hub has no tasks folder,
+and `pb check` reports one as outside the layout.
+
+| Key | Required? | Default | Example |
+|---|---|---|---|
+| `dir` | Yes | — | `"tasks"` — a top-level folder; `pb check` allows everything under it |
+| `key_regex` | Yes | — | `"^PROJ-\\d+$"` — a ticketed task is `<dir>/<KEY>/`, named by the key alone; the portal lists only folders that match |
+| `drafts` | No | `"drafts"` | Where tasks without a ticket yet go: `<dir>/<drafts>/<slug>/`, one folder per draft, so several can wait at once. When a ticket is created, its folder moves to `<dir>/<KEY>/` |
+
+A draft folder's `<slug>` is short kebab-case naming the change (`sms-limit-international`). Whether
+drafts are committed is the hub's choice; either way `pb check` accepts them.
 
 ### Hub name: `hub.name` or `hub_name`
 
