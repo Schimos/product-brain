@@ -1,6 +1,6 @@
 ---
 name: live-update
-description: File (or update) the Jira ticket for a release once its epic-approval reports and release notes exist — checks that both are there, links the release's merge/pull request, uploads the local-only artifacts as attachments, and never files a duplicate. Use when the user asks to raise, file or update the Jira ticket or production-deployment request for a release, to attach the epic-approval report or release notes to a ticket, or after epic-approval and release-notes have run and the ticket is still missing.
+description: File the Jira Service Desk request (for example "Production Deployment") for a release once its epic-approval reports and release notes exist — checks that both are there, then fills in the customer-portal form in the user's signed-in browser (summary, description, the Component/s that says which product, attachments), links the release's merge/pull request, and never files a duplicate. Use when the user asks to raise, file or create the Jira ticket, production-deployment request or deployment ticket for a release, to attach the epic-approval report or release notes to a ticket, or after epic-approval and release-notes have run and the ticket is still missing.
 argument-hint: "[release-branch] [--client-note-url <url>] [--approval-url <url>]"
 allowed-tools: [Bash, Read, Edit, Glob, Grep]
 ---
@@ -8,20 +8,24 @@ allowed-tools: [Bash, Read, Edit, Glob, Grep]
 # live-update
 
 A release leaves artifacts behind: the epic-approval reports, the release-notes folder, and the merge
-request that ships the release branch. This skill checks they exist, then files **one** Jira ticket
-that carries them — linked where a URL exists, uploaded as a real attachment where the artifact is
-only a local file.
+request that ships the release branch. This skill checks they exist, then files **one** request on the
+team's Jira Service Desk customer portal — the same form a person fills in by hand: pick the request
+type, write a summary and description, choose the Component/s (which product the release is for), add
+attachments, press Create.
+
+It uses **no Jira MCP connector and no API token.** The agent drives the portal in a browser the user is
+already signed in to, so the request is raised as that user.
 
 **English only.** Every question and every ticket text is in English, whatever language the user
 writes in. Do not write Finglish or any other language.
 
-It reports and files; people decide. It never calls Jira from a script, never reads a token, and
-never creates the ticket before the user has seen the draft and said yes.
+It reports and files; people decide. It never types a username, password or token, and never presses
+Create before the user has seen the filled-in form and said yes.
 `${CLAUDE_SKILL_DIR}` is this skill's base directory (shown when the skill loads).
 
 ## What is a link and what is an attachment
 
-| Artifact | Has a URL? | In the ticket |
+| Artifact | Has a URL? | In the request |
 |---|---|---|
 | Merge / pull request of the release branch | yes | **link** in the description |
 | Release note published as an Artifact | only if the user supplies it | **link** |
@@ -34,15 +38,13 @@ never creates the ticket before the user has seen the draft and said yes.
 
 | Key | Used for | Default |
 |---|---|---|
-| `jira.project` | the Jira project the ticket is filed in | none — ask (Step 3) |
-| `jira.component` | the Component/s value (which product this ticket is about) | none — ask (Step 3) |
+| `jira.portal_url` | the customer portal, e.g. `https://jira.example.com/servicedesk/customer/portal/8` | none — ask (Step 3) |
+| `jira.request_type` | the request type's name on the portal, e.g. `Production Deployment` | none — ask (Step 3) |
+| `jira.request_type_id` | optional: its id (the number in `.../portal/8/create/66`), for a direct link to the form | pick by name |
+| `jira.component` | the exact Component/s option to choose — which product this release is for | none — ask (Step 5) |
 | `jira.components` | optional `{repo-id: component}` override for the primary repo | — |
-| `jira.issue_type` | optional issue type or Service Desk request type, if the Jira tool accepts one | the project default |
-| `jira.label_prefix` | prefix of the label used to find an existing ticket | `live-update-release-` |
 | `releases.primary_repo`, `releases.production_branch`, `releases.release_branch_regex`, `releases.tag_regex` | which release is "the current one" | see the script |
 | `releases.out`, `approvals.out` | where release-notes and epic-approval folders live | none — a missing one is a warning |
-
-Jira must already be connected (see the `connect-tools` skill); this skill does not set it up.
 
 ## Steps
 
@@ -52,55 +54,74 @@ Jira must already be connected (see the `connect-tools` skill); this skill does 
 python3 "${CLAUDE_SKILL_DIR}/scripts/gather-live-update-facts.py" [--branch <name>] [--client-note-url <url>] [--approval-url <url>]
 ```
 
-Read-only. Prints one JSON object: the release (`branch`, `version_label`, `source`,
-`branch_state`), what epic-approval and release-notes produced, the merge request
-(`merge_request.url`, from `gh` / `glab`), `attachments[]` (local files that must be uploaded),
-`links`, the `jira` block (`project`, `component`, `marker`, `suggested_label`,
-`suggested_summary`) and `warnings[]`. Show the user every warning. Exit 2 means the release could
-not be identified — ask which branch or version, and re-run with `--branch` / `--version`.
+Read-only; it does not touch Jira or a browser. Prints one JSON object: the release (`branch`,
+`version_label`, `source`, `branch_state`), what epic-approval and release-notes produced, the merge
+request (`merge_request.url`, from `gh` / `glab`), `attachments[]` (local files that must be
+uploaded), `links`, the `jira` block (`portal_url`, `request_type`, `create_url`, `requests_url`,
+`component`, `marker`, `suggested_summary`, `missing_keys`) and `warnings[]`. Show the user every
+warning. Exit 2 means the release could not be identified — ask which branch or version, and re-run
+with `--branch` / `--version`.
 
 ### 2. Say what is missing before filing anything
 
 If `epic_approval.exists` or `release_notes.exists` is false, or there is no merge request, say so
 plainly and let the user choose: run the missing skill first, or file with what exists. Never file
-an empty ticket silently.
+an empty request silently.
 
-### 3. Project and component
+### 3. Portal, and request type
 
-Use `jira.project` and `jira.component` from the JSON. If either is null, list the projects (and
-that project's components) with the connected Jira tools, ask the user to pick, and offer to write
-the answer into `brain.config.json` under `jira`. Never guess a project or component, and never
-copy one from another hub.
+If `jira.portal_url` or the request type is null, ask the user for the portal address and the request
+type's name, and offer to write them into `brain.config.json` under `jira`. Never guess either, and
+never copy them from another hub.
 
-### 4. Look for an existing ticket
+### 4. Open the portal and look for an existing request
 
-Search with the connected Jira search tool: the project, and the label `jira.suggested_label`; if
-the tool cannot filter by label, search the summary for `jira.marker`. Tell the user what you found.
+Use a browser the user is already signed in to Jira on — Claude in Chrome (their real browser) is the
+natural choice; the built-in browser pane works too once the user has signed in there themselves. If a
+page asks for a login, **stop and ask the user to sign in**; never type credentials.
 
-### 5. Create, or leave alone
+Open `jira.requests_url` (the user's own requests) and search it for `jira.marker`. If a request
+carrying the marker exists, **do not create another**: report its key and link, and stop. If newer
+artifacts exist than it has (a later `epic_approval.report_date`, a release-notes folder that was
+missing), offer to add a comment with them, and only do it after a yes.
 
-- **Nothing found:** draft the ticket and **show it to the user first** — summary
-  `jira.suggested_summary`, the project and component, the issue type if `jira.issue_type` is set,
-  the label `jira.suggested_label`, and a description containing: the merge request link and the
-  published release-note link (only those that are non-null), the list of files about to be
-  attached and why (they exist only as local files), and the marker. After a yes, create the ticket
-  with the connected Jira create tool, then upload every file in `attachments[]` with the connected
-  attach tool. If no attach tool exists, say so and list the repo paths in the description instead —
-  do not pretend they were attached.
-- **Found:** do not create another. Report its key and URL. If newer artifacts exist than the ticket
-  has (a later `epic_approval.report_date`, a release-notes folder that was missing), offer a
-  comment linking or attaching them, and only add it after a yes. Never reopen a closed ticket.
+### 5. Fill in the form — without pressing Create
 
-### 6. Report
+Open `jira.create_url` when it is set; otherwise open `jira.portal_url` and choose the request type
+named `jira.request_type`. Check the page heading shows that request type. Leave "Raise this request
+on behalf of" as it is. Then:
 
-Ticket key and URL; what was linked, what was attached, what was skipped and why.
+- **Summary:** `jira.suggested_summary`.
+- **Component/s:** open the dropdown and choose `jira.component` exactly as written. If it is null, or
+  not among the options, read the options off the page, ask the user which product(s) this release is
+  for, and offer to save the answer as `jira.component` (or `jira.components` per repo). Never guess a
+  component.
+- **Description**, plain text, one item per line: the merge request link and the published
+  release-note and epic-approval page links (only those that are non-null), the names of the files
+  attached below and why (they exist only as local files), and the marker.
+- **Attachment:** upload every file in `attachments[]` with the browser's file-upload ability (Claude
+  in Chrome's file upload into the Attachment box). If the browser you have cannot upload, list the
+  absolute paths and ask the user to drag them into the box, then wait for them to say it is done.
+  Never claim a file was attached without seeing its name listed on the form.
+
+### 6. Show the form, then create
+
+Tell the user exactly what is in the form — summary, component, description, the attached file names.
+Press **Create** only after a clear yes. Then read the confirmation page and report the request key and
+its URL.
+
+### 7. Report
+
+Request key and URL; what was linked, what was attached, what was skipped and why.
 
 ## Rules
 
-- No script calls Jira or reads a token; the Jira work is yours, with the connected tools.
+- No script calls Jira or opens a browser; the portal work is yours, in the user's own session.
+- Never type or ask for a password, token or one-time code; if signed out, the user signs in.
+- Never press Create before the user has seen the filled-in form and said yes.
 - Never invent a URL. A published release-note or epic-approval page link is one the user
   supplied (`--client-note-url`, `--approval-url`) or that `facts.json` records (release note only).
 - Never attach anything that could hold a secret; these artifacts should not, but check the
   filenames in `attachments[]` before uploading.
-- Never duplicate a ticket that already carries the marker or the label.
+- Never create a second request for a release whose marker already appears in the user's requests.
 - User instructions override this automation.

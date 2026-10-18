@@ -2,9 +2,10 @@
 """Collect the facts needed to file one Jira ticket for a release.
 
 Read-only: it reads git and hub files, and asks `gh` / `glab` (never `create`) for the release's
-merge/pull request. It makes NO Jira call and reads no token - the skill's agent does the Jira
-work with whatever Jira MCP tools are connected. This script only answers: which release is this,
-which artifacts exist for it, which have a URL, and which are local files that must be attached.
+merge/pull request. It makes NO Jira call, opens no browser and reads no credential - the skill's
+agent fills in the Jira Service Desk customer-portal form itself, in a browser the user is already
+signed in to. This script only answers: which release is this, which artifacts exist for it, which
+have a URL, which are local files that must be attached, and what the form should say.
 
 Finding the release, in order: --branch / --version; else the most recently committed remote
 branch matching releases.release_branch_regex on the primary repo; else its latest release tag;
@@ -19,10 +20,11 @@ Keys read from brain.config.json (all optional; a missing one becomes a warning,
   releases.tag_regex             enables the tag fallback
   releases.out                   release-notes folders: "<version> - <date>"
   approvals.out                  epic-approval folders: "<date> - <release branch>"
-  jira.project, jira.component   what the ticket is filed under (asked for by the skill when unset)
+  jira.portal_url                the customer portal, e.g. https://jira.example.com/servicedesk/customer/portal/8
+  jira.request_type              the request type's name on the portal, e.g. "Production Deployment"
+  jira.request_type_id           optional: its id (the number in .../portal/8/create/66), for a direct link
+  jira.component                 the exact Component/s option to pick (asked for by the skill when unset)
   jira.components                optional {repo-id: component} override for the primary repo
-  jira.issue_type                optional
-  jira.label_prefix              default "live-update-release-"
 
     gather-live-update-facts.py [--hub DIR] [--repo ID] [--branch NAME | --version LABEL]
                                 [--client-note-url URL] [--approval-url URL] [--host github|gitlab]
@@ -40,11 +42,11 @@ import json
 import re
 import shutil
 import subprocess
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_BRANCH_RE = r"^(release|hotfix)[-/._]"
-DEFAULT_LABEL_PREFIX = "live-update-release-"
 VERSION_RE = re.compile(r"\d+(?:[._-]\d+){0,3}")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -331,17 +333,27 @@ def merge_request_facts(repo, branch, host, skip):
 
 
 def jira_facts(cfg, repo_id, release, warnings):
-    project = cfg.get("jira.project")
+    portal = (cfg.get("jira.portal_url") or "").rstrip("/")
+    request_type = cfg.get("jira.request_type")
+    type_id = cfg.get("jira.request_type_id")
     component = (cfg.get("jira.components") or {}).get(repo_id) or cfg.get("jira.component")
-    missing = [k for k, v in (("jira.project", project), ("jira.component", component)) if not v]
+    missing = [k for k, v in (("jira.portal_url", portal), ("jira.request_type", request_type or type_id),
+                              ("jira.component", component)) if not v]
     for key in missing:
         warnings.append(f"{key} is not set - ask the user, then offer to save it in brain.config.json")
+    site = ""
+    if portal:
+        parts = urlsplit(portal)
+        site = f"{parts.scheme}://{parts.netloc}"
     label = release["version_label"]
-    safe = re.sub(r"[^A-Za-z0-9._-]", "-", label)
     marker = f"[release:{label}]"
-    return {"project": project, "component": component, "issue_type": cfg.get("jira.issue_type"),
+    return {"portal_url": portal or None,
+            "request_type": request_type,
+            "request_type_id": type_id,
+            "create_url": f"{portal}/create/{type_id}" if portal and type_id else None,
+            "requests_url": f"{site}/servicedesk/customer/user/requests" if site else None,
+            "component": component,
             "marker": marker,
-            "suggested_label": (cfg.get("jira.label_prefix") or DEFAULT_LABEL_PREFIX) + safe,
             "suggested_summary": f"{marker} Production deployment - {cfg.product()} {label}",
             "missing_keys": missing}
 

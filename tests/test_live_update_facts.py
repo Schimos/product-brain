@@ -76,7 +76,8 @@ def main():
             "releases": {"primary_repo": "api", "production_branch": "main", "out": "docs/releases",
                          "tag_regex": r"^v\d+\.\d+\.\d+$"},
             "approvals": {"out": "docs/approvals"},
-            "jira": {"project": "PROD", "component": "Acme"},
+            "jira": {"portal_url": "https://jira.example.com/servicedesk/customer/portal/8/",
+                     "request_type": "Production Deployment", "request_type_id": 66, "component": "Acme"},
         }
         (hub / "brain.config.json").write_text(json.dumps(config))
 
@@ -88,11 +89,15 @@ def main():
         check(not f["epic_approval"]["exists"] and not f["release_notes"]["exists"], "nothing exists")
         check(f["attachments"] == [], "no attachments yet")
         check(f["merge_request"]["found_via"] == "skipped (--no-vcs-host)", "no gh call")
-        check(f["jira"]["marker"] == "[release:1.5.0]"
-              and f["jira"]["suggested_label"] == "live-update-release-1.5.0"
-              and f["jira"]["suggested_summary"] == "[release:1.5.0] Production deployment - Acme 1.5.0",
-              "jira dedupe marker, label and summary")
-        check(f["jira"]["project"] == "PROD" and f["jira"]["component"] == "Acme", "jira project/component from config")
+        j = f["jira"]
+        check(j["marker"] == "[release:1.5.0]"
+              and j["suggested_summary"] == "[release:1.5.0] Production deployment - Acme 1.5.0",
+              "dedupe marker and summary")
+        check(j["portal_url"] == "https://jira.example.com/servicedesk/customer/portal/8"
+              and j["create_url"] == "https://jira.example.com/servicedesk/customer/portal/8/create/66"
+              and j["requests_url"] == "https://jira.example.com/servicedesk/customer/user/requests"
+              and j["request_type"] == "Production Deployment" and j["component"] == "Acme"
+              and j["missing_keys"] == [], "portal form address, request type and component from config")
         check(any("epic-approval" in w for w in f["warnings"]) and any("release-notes" in w for w in f["warnings"]),
               "missing artifacts warned about")
 
@@ -171,14 +176,19 @@ def main():
         del config["jira"]
         (hub / "brain.config.json").write_text(json.dumps(config))
         rc, f = run(hub, "--no-vcs-host")
-        check(f["jira"]["project"] is None and f["jira"]["component"] is None
-              and f["jira"]["missing_keys"] == ["jira.project", "jira.component"], "missing jira keys reported")
+        check(f["jira"]["portal_url"] is None and f["jira"]["component"] is None and f["jira"]["create_url"] is None
+              and f["jira"]["missing_keys"] == ["jira.portal_url", "jira.request_type", "jira.component"],
+              "missing jira keys reported")
+        check(sum("is not set - ask the user" in w for w in f["warnings"]) == 3, "each missing key warned about")
 
         # 7. per-repo component override
-        config["jira"] = {"project": "PROD", "component": "Default", "components": {"api": "Bugloos"}}
+        config["jira"] = {"portal_url": "https://jira.example.com/servicedesk/customer/portal/8",
+                          "request_type": "Production Deployment", "component": "Default",
+                          "components": {"api": "Bugloos"}}
         (hub / "brain.config.json").write_text(json.dumps(config))
         rc, f = run(hub, "--no-vcs-host")
-        check(f["jira"]["component"] == "Bugloos", "per-repo component override")
+        check(f["jira"]["component"] == "Bugloos" and f["jira"]["create_url"] is None
+              and f["jira"]["missing_keys"] == [], "per-repo component override; no id means no direct link")
 
         # 8. nothing identifies a release -> a person must decide
         bare = tmp / "hub2"
