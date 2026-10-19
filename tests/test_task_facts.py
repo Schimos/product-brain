@@ -96,17 +96,25 @@ def main():
         write(hub / "tasks/drafts/sms-limit/plan.md", "Plan for CH-NNN on `ai-ch-NNN`.\n")
         write(hub / "tasks/drafts/sms-limit/mockups/U1-x.html", "<p>CH-NNN</p>")
         write(hub / "tasks/draft/description.md", "# Legacy draft\n")
+        write(hub / "tasks/draft2/description.md", "# A second draft made before drafts/ existed\n")
+        write(hub / "tasks/CH-7/description.md", "# a ticketed task, never a draft\n")
 
         drafts = facts(hub, "drafts")
-        assert [d["slug"] for d in drafts] == ["otp-retry", "sms-limit", "draft"], drafts
+        assert [d["slug"] for d in drafts] == ["otp-retry", "sms-limit", "draft", "draft2"], drafts
         assert drafts[1]["has_plan"] and drafts[1]["status"] == "Ready for plan", drafts[1]
         assert drafts[2]["path"] == "tasks/draft", "the older single draft folder still counts"
+        assert drafts[3]["path"] == "tasks/draft2" and drafts[3]["legacy"], "any non-key folder in tasks/ is a draft"
+        assert not drafts[0]["legacy"], drafts[0]
 
         code, _, err = run(hub, "resolve")
         assert code == 2 and "several drafts" in err and "otp-retry" in err and "sms-limit" in err, err
         assert facts(hub, "resolve", "sms-limit")["path"] == "tasks/drafts/sms-limit"
         assert facts(hub, "resolve", "tasks/drafts/otp-retry/")["slug"] == "otp-retry"
         assert facts(hub, "resolve", "draft")["path"] == "tasks/draft"
+        assert facts(hub, "resolve", "draft2")["path"] == "tasks/draft2"
+        assert facts(hub, "resolve", "tasks/draft2/")["slug"] == "draft2"
+        (hub / "tasks/CH-7/description.md").unlink()
+        (hub / "tasks/CH-7").rmdir()
         assert facts(hub, "resolve", "CH-12") == {"kind": "task", "key": "CH-12", "path": "tasks/CH-12",
                                                     "exists": False}
         code, _, err = run(hub, "resolve", "Fix The Thing")
@@ -147,6 +155,11 @@ def main():
         write(hub / "tasks/CH-1201/plan.md", "changed locally\n")
         code, out, _ = run(hub, "verify", "CH-1201", "--no-fetch")
         assert code == 2 and "DIFFERS from main: tasks/CH-1201/plan.md" in out, out
+        assert "push tasks/CH-1201/plan.md to main" in out, out
+        git(hub, "checkout", "--", "tasks/CH-1201/plan.md")
+        write(hub / "constitution.md", "# Constitution, edited locally\n")
+        code, out, _ = run(hub, "verify", "CH-1201", "--no-fetch")
+        assert code == 2 and "push constitution.md to main" in out and "push tasks/CH-1201" not in out, out
 
         # config errors name the key and give an example
         write(hub / "brain.config.json", json.dumps({"tasks": {"dir": "tasks"}}))

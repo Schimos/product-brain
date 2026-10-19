@@ -49,8 +49,9 @@ skill on a team detail, it wins. If none is set, use the hub's `CLAUDE.md`.
   if the slug is taken by a different task, pick another. Never write over another draft; it may
   be another session's work.
 - If the task's (or the draft's) `description.md` already exists, use **Update mode** below. A
-  single `<dir>/draft/` folder from before drafts had their own folders is still a draft
-  (`task-facts drafts` lists it): use it where it is, don't move it.
+  folder directly in `<dir>/` that is not a ticket key (`tasks/draft/`, `tasks/draft2/`, made before
+  drafts had their own folders) is still a draft: `task-facts drafts` lists it with `"legacy": true`.
+  Use it where it is, don't move it; new drafts always go in `<dir>/<drafts>/<slug>/`.
 
 ## 2. Check it is task-sized
 
