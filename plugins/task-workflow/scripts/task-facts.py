@@ -182,22 +182,26 @@ def header_field(text, name):
     return m.group(1) if m else None
 
 
-def draft_info(hub, folder):
+def draft_info(hub, folder, legacy=False):
     desc = folder / "description.md"
     text = desc.read_text(encoding="utf-8", errors="replace") if desc.is_file() else ""
     title = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), None)
     return {"slug": folder.name, "path": folder.relative_to(hub).as_posix(), "title": title,
             "status": header_field(text, "Status"), "has_description": desc.is_file(),
-            "has_plan": (folder / "plan.md").is_file()}
+            "has_plan": (folder / "plan.md").is_file(), "legacy": legacy}
+
+
+def legacy_drafts(hub, s):
+    """Drafts made before drafts had a folder each: any folder directly in <dir>/ that is neither a
+    ticket key nor the drafts folder (tasks/draft/, and the tasks/draft2/ people made to get a second)."""
+    root = hub / s["dir"]
+    return sorted((p for p in root.glob("*") if p.is_dir() and p.name != s["drafts"]
+                   and not p.name.startswith(".") and not s["_key_rx"].match(p.name)), key=lambda p: p.name)
 
 
 def list_drafts(hub, s):
-    root = hub / s["dir"]
-    found = sorted((p for p in (root / s["drafts"]).glob("*") if p.is_dir()), key=lambda p: p.name)
-    legacy = root / LEGACY_DRAFT
-    if legacy.is_dir() and LEGACY_DRAFT != s["drafts"]:
-        found.append(legacy)
-    return [draft_info(hub, p) for p in found]
+    found = sorted((p for p in (hub / s["dir"] / s["drafts"]).glob("*") if p.is_dir()), key=lambda p: p.name)
+    return [draft_info(hub, p) for p in found] + [draft_info(hub, p, legacy=True) for p in legacy_drafts(hub, s)]
 
 
 def resolve(hub, s, arg):
@@ -207,17 +211,19 @@ def resolve(hub, s, arg):
     if arg:
         rel = arg.replace("\\", "/").strip("/")
         prefix = "%s/%s/" % (s["dir"], s["drafts"])
+        legacy = {p.name: p for p in legacy_drafts(hub, s)}
         if rel.startswith(prefix):
             rel = rel[len(prefix):]
-        elif rel == "%s/%s" % (s["dir"], LEGACY_DRAFT) or (
-                rel == LEGACY_DRAFT and (hub / s["dir"] / LEGACY_DRAFT).is_dir()
-                and not (hub / s["dir"] / s["drafts"] / LEGACY_DRAFT).is_dir()):
-            rel = None
+        elif rel.startswith(s["dir"] + "/") and rel[len(s["dir"]) + 1:] in legacy:
+            rel = rel[len(s["dir"]) + 1:]
         elif "/" in rel:
             raise Decide("%s is not a task (%s/<KEY>/) or a draft (%s<slug>/)" % (arg, s["dir"], prefix))
-        folder = hub / s["dir"] / LEGACY_DRAFT if rel is None else hub / s["dir"] / s["drafts"] / rel
-        if rel is not None and not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", rel):
-            raise Decide("draft slug %r must be lower-case kebab-case, e.g. sms-limit-international" % rel)
+        if rel in legacy and not (hub / s["dir"] / s["drafts"] / rel).is_dir():
+            folder = legacy[rel]  # an older draft is used where it is, never moved
+        else:
+            if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", rel):
+                raise Decide("draft slug %r must be lower-case kebab-case, e.g. sms-limit-international" % rel)
+            folder = hub / s["dir"] / s["drafts"] / rel
         return {"kind": "draft", "slug": folder.name, "path": folder.relative_to(hub).as_posix(),
                 "exists": folder.is_dir()}
     drafts = list_drafts(hub, s)
@@ -290,18 +296,27 @@ def verify(hub, s, key, fetch=True):
         raise Decide("%s does not exist locally" % folder.relative_to(hub).as_posix())
     paths = (["constitution.md"] if (hub / "constitution.md").is_file() else []) + sorted(
         p.relative_to(hub).as_posix() for p in folder.rglob("*") if p.is_file() and p.name != "report.md")
-    rows, ready = [], True
+    rows, stale = [], []
     for p in paths:
         remote = git(hub, "rev-parse", "-q", "--verify", "%s:%s" % (ref, p), check=False).stdout.strip()
         if not remote:
             rows.append("MISSING on %s: %s" % (on, p))
-            ready = False
+            stale.append(p)
         elif git(hub, "hash-object", "--", p).stdout.strip() != remote:
             rows.append("DIFFERS from %s: %s" % (on, p))
-            ready = False
+            stale.append(p)
         else:
             rows.append("OK %s" % p)
-    return rows, ready, on
+    return rows, push_list(paths, stale, folder.relative_to(hub).as_posix()), on
+
+
+def push_list(paths, stale, folder):
+    """What to push, as short as it stays exact: the task folder when every file in it is stale."""
+    inside = [p for p in paths if p.startswith(folder + "/")]
+    stale_inside = [p for p in stale if p.startswith(folder + "/")]
+    if inside and stale_inside == inside:
+        return [p for p in stale if not p.startswith(folder + "/")] + [folder + "/"]
+    return stale
 
 
 # ── main ──────────────────────────────────────────────────────────────
@@ -341,11 +356,11 @@ def main():
         elif a.cmd == "finalize":
             out = finalize(hub, s, a.draft, a.key)
         else:
-            rows, ready, on = verify(hub, s, a.key, fetch=not a.no_fetch)
+            rows, push, on = verify(hub, s, a.key, fetch=not a.no_fetch)
             print("\n".join(rows))
-            print("Ready to run: every file the agent reads is current on %s." % on if ready else
-                  "Not ready to run: push %s/%s/ to %s first." % (s["dir"], a.key, on))
-            return 0 if ready else 2
+            print("Not ready to run: push %s to %s first." % (", ".join(push), on) if push else
+                  "Ready to run: every file the agent reads is current on %s." % on)
+            return 2 if push else 0
     except Decide as e:
         print(str(e), file=sys.stderr)
         return 2
