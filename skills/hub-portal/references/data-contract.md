@@ -33,7 +33,7 @@ build.
 | `specsLede`, `specsLink?` | string; `{label, id}` | Stable. The link is usually the delivery roadmap artifact. |
 | `specStatus` | `{key: {label, pill}}` | Stable. `pill` is one of `p-released p-progress p-branch p-waiting p-spec p-deferred`. |
 | `specs` | `{key: {name, status, note}}` | The delivery roadmap's verdict per spec. `key` is the spec's folder name, or its file name without `.md`. |
-| `tasksLede`, `tasks` | string; `{KEY: note}` | One line per task folder (only when `brain.config.json` has `tasks`, or the older `portal.tasks`). Drafts under `<tasks.dir>/<tasks.drafts>/` have no key and get no row. |
+| `tasksLede`, `tasks` | string; `{KEY: note}` | One line per task folder (only when `brain.config.json` has `tasks`, or the older `portal.tasks`). Drafts under `<tasks.dir>/<tasks.drafts>/` have no key and get no row. Archived tasks (`<tasks.dir>/<tasks.archive>/<KEY>/`) are listed apart, folded, as done; a note for one is optional. |
 | `artifactGroups` | `[group]` | Add a group only for a new kind of page. |
 | `artifacts` | `[{group, title, id, updated?, desc, src?, shared?}]` | The Artifact tool's `list`. `id` is the short id or the full URL; `src` is the hub file the page is generated from. |
 | `flows` | `[{title, desc, steps[], docs[]}]` | The hub's runbooks. `docs` must be hub Markdown paths. |

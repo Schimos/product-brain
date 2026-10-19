@@ -159,6 +159,15 @@ def main():
         results.append(expect("top-level tasks: one row per ticket, drafts skipped",
                               code == 0 and "1 tasks" in out and '"key":"PROJ-7"' in page
                               and '"key":"drafts"' not in page, out))
+        # a done task moved to tasks/archive/<KEY>/ is still listed, marked archived, and its note may stay
+        (hub / "tasks/PROJ-7").rename(hub / "tasks/archive-tmp")
+        (hub / "tasks/archive").mkdir()
+        (hub / "tasks/archive-tmp").rename(hub / "tasks/archive/PROJ-7")
+        code, out = run("build.py", hub, "--no-fetch", "--no-brand")
+        page = (hub / ".work/hub-portal/index.html").read_text(encoding="utf-8")
+        results.append(expect("archived task: listed as archived, its note no error",
+                              code == 0 and "1 tasks" in out and '"key":"archive"' not in page
+                              and '"archived":true' in page and "tasks/archive/PROJ-7/description.md" in page, out))
         cfg["tasks"] = {"dir": "tasks"}
         cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
         code, out = run("build.py", hub, "--no-fetch", "--no-brand")

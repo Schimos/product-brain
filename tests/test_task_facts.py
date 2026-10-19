@@ -116,7 +116,7 @@ def main():
         (hub / "tasks/CH-7/description.md").unlink()
         (hub / "tasks/CH-7").rmdir()
         assert facts(hub, "resolve", "CH-12") == {"kind": "task", "key": "CH-12", "path": "tasks/CH-12",
-                                                    "exists": False}
+                                                    "exists": False, "archived": False}
         code, _, err = run(hub, "resolve", "Fix The Thing")
         assert code == 2 and "kebab-case" in err, err
 
@@ -160,6 +160,69 @@ def main():
         write(hub / "constitution.md", "# Constitution, edited locally\n")
         code, out, _ = run(hub, "verify", "CH-1201", "--no-fetch")
         assert code == 2 and "push constitution.md to main" in out and "push tasks/CH-1201" not in out, out
+        git(hub, "checkout", "--", "constitution.md")
+
+        # the archive: a done task moves to tasks/archive/<KEY>/ and every hub link moves with it
+        write(hub / "specs/001-batch/spec.md", "# Batch\n")
+        write(hub / "specs/001-batch/tasks.md", "Delivers [CH-1201](../../tasks/CH-1201/description.md); "
+                                               "detail in `tasks/CH-1201/plan.md`, not tasks/CH-12010.\n")
+        write(hub / "docs/notes/x.md", "[plan](https://gitlab.example.com/team/acme-brain/-/blob/main/"
+                                       "tasks/CH-1201/plan.md) · [mockup](../../tasks/CH-1201/mockups/U1-x.html#top)\n")
+        plan_md = ("Spec: [batch](../../specs/001-batch/spec.md) · [same folder](description.md) · [web](https://x.io)"
+                   " · [code](../../repos/api/app/X.php#L3) · [report](report.md)\n")
+        write(hub / "tasks/CH-1201/plan.md", plan_md)
+        write(hub / "tasks/CH-1202/description.md", "# CH-1202: still open\n\n| Field | Value |\n|---|---|\n"
+                                                    "| Status | Ready for plan |\n| Last updated | 2026-01-01 |\n")
+        before = {p: (hub / p).read_text(encoding="utf-8") for p in
+                  ("specs/001-batch/tasks.md", "docs/notes/x.md", "tasks/CH-1201/plan.md")}
+
+        listed = {t["key"]: t for t in facts(hub, "tasks")}
+        assert set(listed) == {"CH-1201", "CH-1202"}, listed
+        assert listed["CH-1201"]["mentioned_in"] == ["specs/001-batch"] and not listed["CH-1201"]["archived"], listed
+        assert listed["CH-1202"]["mentioned_in"] == [], "a spec mentioning CH-12010 does not mention CH-1202"
+
+        st = facts(hub, "status", "CH-1202", "In Progress")
+        assert st["changed"] and "| Ticket status | In Progress, checked " in (
+            hub / "tasks/CH-1202/description.md").read_text(encoding="utf-8")
+
+        code, _, err = run(hub, "archive", "CH-1201", "Done", "--absorbed-into", "specs/404-none")
+        assert code == 2 and "does not exist" in err and (hub / "tasks/CH-1201").is_dir(), err
+        moved = facts(hub, "archive", "CH-1201", "Done", "--absorbed-into", "specs/001-batch")
+        assert moved["to"] == "tasks/archive/CH-1201" and not (hub / "tasks/CH-1201").exists(), moved
+        assert sorted(moved["changed"]) == ["docs/notes/x.md", "specs/001-batch/tasks.md"], moved
+        tasks_md = (hub / "specs/001-batch/tasks.md").read_text(encoding="utf-8")
+        assert "(../../tasks/archive/CH-1201/description.md)" in tasks_md, tasks_md
+        assert "`tasks/archive/CH-1201/plan.md`" in tasks_md and "not tasks/CH-12010." in tasks_md, tasks_md
+        notes = (hub / "docs/notes/x.md").read_text(encoding="utf-8")
+        assert "/-/blob/main/tasks/archive/CH-1201/plan.md)" in notes, notes
+        assert "(../../tasks/archive/CH-1201/mockups/U1-x.html#top)" in notes, notes
+        plan_now = (hub / "tasks/archive/CH-1201/plan.md").read_text(encoding="utf-8")
+        assert plan_now == plan_md.replace("../../", "../../../"), "links out move by path, present or not"
+        desc = (hub / "tasks/archive/CH-1201/description.md").read_text(encoding="utf-8")
+        assert "| Status | Absorbed into [specs/001-batch](../../../specs/001-batch) |" in desc, desc
+        assert "| Ticket status | Done, checked " in desc, desc
+        assert (hub / "tasks/archive/CH-1201/mockups/U1-x.html").is_file(), "every file moves, not only text"
+
+        assert facts(hub, "resolve", "CH-1201") == {"kind": "task", "key": "CH-1201", "exists": True,
+                                                    "path": "tasks/archive/CH-1201", "archived": True}
+        assert facts(hub, "links", "CH-1201")["files"]["plan.md"].endswith("/main/tasks/archive/CH-1201/plan.md")
+        assert all(d["slug"] != "archive" for d in facts(hub, "drafts")), "the archive is not a legacy draft"
+        listed = {t["key"]: t for t in facts(hub, "tasks")}
+        assert listed["CH-1201"]["archived"] and listed["CH-1201"]["absorbed_into"] == "specs/001-batch", listed
+        code, _, err = run(hub, "archive", "CH-1201", "Done")
+        assert code == 2 and "already archived" in err, err
+        write(hub / "tasks/drafts/late/description.md", "# CH-NNN\n")
+        code, _, err = run(hub, "finalize", "late", "CH-1201")
+        assert code == 2 and "tasks/archive/CH-1201 already exists" in err, err
+
+        # a reopened ticket brings the folder back, and every link back with it
+        back = facts(hub, "restore", "CH-1201", "In Progress")
+        assert back["to"] == "tasks/CH-1201" and back["status"] == "Reopened", back
+        assert not (hub / "tasks/archive").exists(), "the last task out leaves no empty archive folder"
+        for p, text in before.items():
+            assert (hub / p).read_text(encoding="utf-8") == text, p
+        code, _, err = run(hub, "restore", "CH-1201", "Done")
+        assert code == 2 and "not archived" in err, err
 
         # config errors name the key and give an example
         write(hub / "brain.config.json", json.dumps({"tasks": {"dir": "tasks"}}))

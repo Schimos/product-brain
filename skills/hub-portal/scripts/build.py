@@ -289,18 +289,22 @@ def main():
     tasks = []
     if tasks_cfg:
         troot, rx = hub / tasks_dir, re.compile(tasks_cfg["key_regex"])
-        for child in sorted(troot.iterdir()) if troot.is_dir() else []:
-            if not (child.is_dir() and rx.match(child.name)):
-                continue
-            prefix = "%s/%s/" % (tasks_dir, child.name)
-            docs = [[prefix + f, f[:-3]] for f in TASK_FILES if prefix + f in by_path]
-            note = data.get("tasks", {}).get(child.name)
-            if not note:
-                note = by_path[docs[0][0]]["t"] if docs else ""
-                warn("task %s has no note in the data file's tasks - using its first document's title" % child.name)
-            tasks.append({"key": child.name, "note": note, "docs": docs})
+        aroot = troot / (tasks_cfg.get("archive") or "archive").strip("/")  # done tasks, from /task-archive
+        for archived, root in ((False, troot), (True, aroot)):
+            for child in sorted(root.iterdir()) if root.is_dir() else []:
+                if not (child.is_dir() and rx.match(child.name)):
+                    continue
+                prefix = "%s/" % child.relative_to(hub).as_posix()
+                docs = [[prefix + f, f[:-3]] for f in TASK_FILES if prefix + f in by_path]
+                note = data.get("tasks", {}).get(child.name)
+                if not note:
+                    note = by_path[docs[0][0]]["t"] if docs else ""
+                    if not archived:
+                        warn("task %s has no note in the data file's tasks - using its first document's title"
+                             % child.name)
+                tasks.append({"key": child.name, "note": note, "docs": docs, "archived": archived})
         for key in data.get("tasks", {}):
-            if not (troot / key).is_dir():
+            if not ((troot / key).is_dir() or (aroot / key).is_dir()):
                 err("the data file's tasks has '%s' but %s/%s/ does not exist" % (key, tasks_dir, key))
 
     # ── constitution principles ────────────────────────────────────────

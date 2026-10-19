@@ -13,6 +13,7 @@ connection goes back to the user.
 | `project` | Jira: yes | `"PROJ"` | Jira's project key. For GitLab and GitHub, the prefix of a task key: issue 7 is `PROJ-7`. It also makes the placeholder key `PROJ-NNN` |
 | `types` | no | `{"Story": "Task", "Technical debt": "Task"}` | the description's Type → the tracker's issue type (or GitLab/GitHub label). Unmapped types pass through |
 | `fields` | no | `{"Bug": [{"name": "Bug Source", "id": "customfield_11001", "options": ["Internal", "Client"]}]}` | fields a type requires; the skill asks the user to pick an option |
+| `done` | no | `["Done", "Released"]` | the statuses whose tasks `/task-archive` moves to the archive. Default: Jira's `Done` status category; a closed GitLab or GitHub issue |
 | `setup` | no | `"/jira setup"` | what to tell the user to run when the connection is missing. Default: `/product-brain:connect-tools` |
 
 `key_regex` must end in the issue number (`^PROJ-\d+$`), so the key, the folder and the issue
@@ -50,6 +51,18 @@ skill again. A connect timeout gets the same hint. Never run a setup wizard your
   `{noformat}`.
 - Inside `{noformat}` the URLs are plain text, so they copy cleanly. That is the one place a URL is
   not a link.
+
+## Reading statuses (`/task-archive`)
+
+Read every task's status in as few calls as possible, and only read:
+
+| Kind | Call | Done when |
+|---|---|---|
+| jira | `jira_search` with `key in (PROJ-1, PROJ-2, …)`, fields `status,resolution`, up to 50 keys a page | `status.category` is `Done` (or the status name is in `done`) |
+| gitlab | the work-item list, or `glab issue list -R <project> --iid …` / `glab issue view <n>` | `state` is `closed` (or a label in `done`) |
+| github | `gh issue list -R <owner/repo> --state all --json number,state,stateReason` | `state` is `CLOSED` (or a label in `done`) |
+
+A key the tracker does not return is "not found": never treat it as done.
 
 ## Reading and updating
 

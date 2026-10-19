@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Facts and the one file move behind the task-workflow skills (task-description, task-plan,
-task-ticket, quality-gate).
+"""Facts and the file moves behind the task-workflow skills (task-description, task-plan,
+task-ticket, task-archive, quality-gate).
 
 Reads the `tasks` block of brain.config.json. It never calls the tracker, never commits and never
 pushes: the skills do that, after a person confirms. What it does do is the part that must be
 exact every time - where a task or draft lives, what its links and branch are called, moving a
-draft to its key, and whether the files an agent will read are really on the hub's server.
+draft to its key, moving a finished task to the archive (and every hub link to it with it), and
+whether the files an agent will read are really on the hub's server.
 
     task-facts.py [--hub DIR] config                  resolved settings, templates and warnings
     task-facts.py [--hub DIR] drafts                  every draft waiting for a ticket
@@ -13,16 +14,24 @@ draft to its key, and whether the files an agent will read are really on the hub
     task-facts.py [--hub DIR] links KEY               ticket URL, branch, hub URLs of the task files
     task-facts.py [--hub DIR] finalize DRAFT KEY      move a draft to <dir>/<KEY>/, swap in the key
     task-facts.py [--hub DIR] verify KEY [--no-fetch] are the task files on the server, and current?
+    task-facts.py [--hub DIR] tasks                   every ticketed task, open and archived, with its state
+    task-facts.py [--hub DIR] status KEY TICKET-STATUS             record the tracker's status in the header
+    task-facts.py [--hub DIR] archive KEY TICKET-STATUS [--absorbed-into PATH]
+                                                      move a done task to <dir>/<archive>/<KEY>/
+    task-facts.py [--hub DIR] restore KEY TICKET-STATUS             move a reopened task back to <dir>/<KEY>/
 
 Keys read from brain.config.json (`tasks`; `portal.tasks` is the older place for dir/key_regex):
 
   dir            required  "tasks" - one folder per ticket, <dir>/<KEY>/
   key_regex      required  "^PROJ-\\d+$" - a ticket key, and the only folder name allowed for a task
   drafts         "drafts"  drafts without a ticket: <dir>/<drafts>/<slug>/, one folder per draft
+  archive        "archive" tasks whose ticket is done: <dir>/<archive>/<KEY>/
   placeholder    "<tracker.project>-NNN" (else "KEY-NNN") - the key written into a draft's files
   branch         "{key_lower}" - branch name; {key}, {key_lower} and {n} (the key's number)
   base_branch    releases.integration_branch, else "main" - where task branches start and merge
-  tracker        {"kind": "jira|gitlab|github", "url": ..., "project": ..., "fields": {...}}
+  tracker        {"kind": "jira|gitlab|github", "url": ..., "project": ..., "fields": {...},
+                  "done": [...]} - done: the statuses that archive a task (default: Jira's Done
+                  status category, a closed GitLab or GitHub issue)
   areas          {"<repo id>": "BE"} - the short label each repo gets in a ticket summary
   locales        ["en"] - the first one is the primary language for copy and screenshots
   conventions    path of the hub's own task rules (test commands, review commands, apps, widths)
@@ -37,16 +46,22 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import datetime
 import json
+import posixpath
 import re
 import shutil
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent
 TEMPLATES = ["task-description", "task-plan", "task-report", "task-ticket-blocks"]
 TRACKERS = ("jira", "gitlab", "github")
 LEGACY_DRAFT = "draft"  # the single draft folder used before drafts had a folder each
+TEXT = (".md", ".html", ".htm", ".json", ".yml", ".yaml", ".txt", ".csv", ".svg")
+# a link target inside Markdown `](…)` or an HTML href/src attribute
+LINK_RX = re.compile(r"""(\]\(\s*<?)([^)\s>]+)|(\b(?:href|src)\s*=\s*["'])([^"']+)""")
 
 
 class Decide(Exception):
@@ -114,6 +129,9 @@ def load(hub):
         if tracker["kind"] == "jira" and not tracker.get("project"):
             die('tasks.tracker.project is required for Jira, e.g. "PROJ"')
         tracker = {**tracker, "url": tracker["url"].rstrip("/")}
+        if tracker.get("done") is not None and not (isinstance(tracker["done"], list)
+                                                    and all(isinstance(x, str) for x in tracker["done"])):
+            die('tasks.tracker.done must be a list of status names, e.g. ["Done", "Released"]')
     else:
         warnings.append("tasks.tracker is not set: /task-ticket cannot create tickets until it is")
     placeholder = t.get("placeholder") or ("%s-NNN" % tracker["project"] if tracker and tracker.get("project")
@@ -145,6 +163,8 @@ def load(hub):
         "dir": t["dir"].strip("/"),
         "key_regex": t["key_regex"],
         "drafts": (t.get("drafts") or "drafts").strip("/"),
+        "archive": (t.get("archive") or "archive").strip("/"),
+        "specs_dir": specs_dir(cfg, hub),
         "placeholder": placeholder,
         "placeholder_branch": render_branch(branch, placeholder, "NNN"),
         "branch": branch,
@@ -159,6 +179,18 @@ def load(hub):
     }
     s["_key_rx"] = key_rx
     return s
+
+
+def specs_dir(cfg, hub):
+    """Where feature specs live, for spotting the spec a task was folded into."""
+    for k in ("portal", "roadmap", "releases"):
+        d = (cfg.get(k) or {}).get("specs_dir")
+        if isinstance(d, str) and d.strip("/"):
+            return d.strip("/")
+    for d in ("specs", "docs/specs"):
+        if (hub / d).is_dir():
+            return d
+    return None
 
 
 def render_branch(pattern, key, n):
@@ -195,7 +227,7 @@ def legacy_drafts(hub, s):
     """Drafts made before drafts had a folder each: any folder directly in <dir>/ that is neither a
     ticket key nor the drafts folder (tasks/draft/, and the tasks/draft2/ people made to get a second)."""
     root = hub / s["dir"]
-    return sorted((p for p in root.glob("*") if p.is_dir() and p.name != s["drafts"]
+    return sorted((p for p in root.glob("*") if p.is_dir() and p.name not in (s["drafts"], s["archive"])
                    and not p.name.startswith(".") and not s["_key_rx"].match(p.name)), key=lambda p: p.name)
 
 
@@ -204,10 +236,19 @@ def list_drafts(hub, s):
     return [draft_info(hub, p) for p in found] + [draft_info(hub, p, legacy=True) for p in legacy_drafts(hub, s)]
 
 
+def task_folder(hub, s, key):
+    """(folder, archived): the open folder when it exists, else the archived one, else the open path."""
+    open_, archived = hub / s["dir"] / key, hub / s["dir"] / s["archive"] / key
+    if not open_.is_dir() and archived.is_dir():
+        return archived, True
+    return open_, False
+
+
 def resolve(hub, s, arg):
     if arg and s["_key_rx"].match(arg):
-        folder = hub / s["dir"] / arg
-        return {"kind": "task", "key": arg, "path": folder.relative_to(hub).as_posix(), "exists": folder.is_dir()}
+        folder, archived = task_folder(hub, s, arg)
+        return {"kind": "task", "key": arg, "path": folder.relative_to(hub).as_posix(), "exists": folder.is_dir(),
+                "archived": archived}
     if arg:
         rel = arg.replace("\\", "/").strip("/")
         prefix = "%s/%s/" % (s["dir"], s["drafts"])
@@ -242,7 +283,7 @@ def resolve(hub, s, arg):
 def links(hub, s, key):
     if not s["_key_rx"].match(key):
         raise Decide("%s does not match tasks.key_regex %s" % (key, s["key_regex"]))
-    n, folder = key_number(key), "%s/%s" % (s["dir"], key)
+    n, folder = key_number(key), task_folder(hub, s, key)[0].relative_to(hub).as_posix()
     tr, ticket = s["tracker"], None
     if tr:
         ticket = {"jira": "%s/browse/%s" % (tr["url"], key), "gitlab": "%s/-/issues/%s" % (tr["url"], n),
@@ -270,8 +311,9 @@ def finalize(hub, s, draft, key):
     if d["kind"] != "draft" or not d["exists"]:
         raise Decide("no draft folder %s" % d["path"])
     src, dst = hub / d["path"], hub / s["dir"] / key
-    if dst.exists():
-        raise Decide("%s already exists - ask before touching it" % dst.relative_to(hub).as_posix())
+    for taken in (dst, hub / s["dir"] / s["archive"] / key):
+        if taken.exists():
+            raise Decide("%s already exists - ask before touching it" % taken.relative_to(hub).as_posix())
     shutil.move(str(src), str(dst))
     branch = render_branch(s["branch"], key, key_number(key))
     changed = []
@@ -291,7 +333,7 @@ def verify(hub, s, key, fetch=True):
     on = (s["source"] or {}).get("branch") or "main"
     if fetch:
         git(hub, "fetch", "-q", "origin", on)
-    ref, folder = "origin/" + on, hub / s["dir"] / key
+    ref, folder = "origin/" + on, task_folder(hub, s, key)[0]
     if not folder.is_dir():
         raise Decide("%s does not exist locally" % folder.relative_to(hub).as_posix())
     paths = (["constitution.md"] if (hub / "constitution.md").is_file() else []) + sorted(
@@ -319,6 +361,183 @@ def push_list(paths, stale, folder):
     return stale
 
 
+# ── the archive ───────────────────────────────────────────────────────
+
+
+def key_search_rx(s):
+    """key_regex unanchored, for finding keys inside prose."""
+    body = s["key_regex"].lstrip("^").rstrip("$")
+    return re.compile(r"(?<![\w-])(?:%s)(?![\w-])" % body)
+
+
+def spec_mentions(hub, s):
+    """{KEY: [spec folder, …]}: the specs whose files name a task key - the spec a task was folded into."""
+    if not s["specs_dir"] or not (hub / s["specs_dir"]).is_dir():
+        return {}
+    root, rx, found = hub / s["specs_dir"], key_search_rx(s), {}
+    for f in sorted(root.rglob("*")):
+        if not (f.is_file() and f.suffix in TEXT):
+            continue
+        spec = "%s/%s" % (s["specs_dir"], f.relative_to(root).parts[0])
+        for key in set(rx.findall(f.read_text(encoding="utf-8", errors="replace"))):
+            found.setdefault(key, [])
+            if spec not in found[key]:
+                found[key].append(spec)
+    return found
+
+
+def absorbed_into(status):
+    m = re.match(r"Absorbed into\s+(?:\[([^\]]+)\]|`?([^`\s]+)`?)", status or "")
+    return (m.group(1) or m.group(2)).strip("/") if m else None
+
+
+def task_info(hub, s, folder, archived, mentions):
+    desc = folder / "description.md"
+    text = desc.read_text(encoding="utf-8", errors="replace") if desc.is_file() else ""
+    title = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), None)
+    status = header_field(text, "Status")
+    return {"key": folder.name, "path": folder.relative_to(hub).as_posix(), "archived": archived, "title": title,
+            "status": status, "ticket_status": header_field(text, "Ticket status"),
+            "has_description": desc.is_file(), "has_plan": (folder / "plan.md").is_file(),
+            "has_report": (folder / "report.md").is_file(), "absorbed_into": absorbed_into(status),
+            "mentioned_in": sorted(mentions.get(folder.name, []))}
+
+
+def list_tasks(hub, s):
+    mentions, rows = spec_mentions(hub, s), []
+    for archived, root in ((False, hub / s["dir"]), (True, hub / s["dir"] / s["archive"])):
+        for p in sorted(root.glob("*"), key=lambda p: p.name):
+            if p.is_dir() and s["_key_rx"].match(p.name):
+                rows.append(task_info(hub, s, p, archived, mentions))
+    return rows
+
+
+def set_field(text, name, value, after="Status"):
+    """Set a header row's value; add the row after `after` (else after the table's rule) if missing."""
+    rx = re.compile(r"^(\|\s*%s\s*\|\s*)(.*?)(\s*\|\s*)$" % re.escape(name), re.M)
+    if rx.search(text):
+        return rx.sub(lambda m: m.group(1) + value + m.group(3), text, count=1)
+    anchor = (re.compile(r"^\|\s*%s\s*\|.*$" % re.escape(after), re.M).search(text)
+              or re.compile(r"^\|\s*-+\s*\|\s*-+\s*\|\s*$", re.M).search(text))
+    if not anchor:
+        return text
+    return text[:anchor.end()] + "\n| %s | %s |" % (name, value) + text[anchor.end():]
+
+
+def hub_text_files(hub):
+    p = git(hub, "ls-files", "-z", "--cached", "--others", "--exclude-standard", check=False)
+    return sorted({f for f in p.stdout.split("\0") if f and f.endswith(TEXT)})
+
+
+def relink(hub, old, new):
+    """The text files that change when folder `old` moves to `new` (hub-relative, POSIX): links
+    into the folder from anywhere in the hub, links out of the files inside it (they now sit at
+    another depth), and plain mentions of the folder's path. Returns {path after the move: text}."""
+    mention = re.compile(r"(?<![\w.-])%s(?![\w-])" % re.escape(old))
+
+    def inside(p):
+        return p == old or p.startswith(old + "/")
+
+    files = set(hub_text_files(hub)) | {p.relative_to(hub).as_posix() for p in (hub / old).rglob("*")
+                                        if p.is_file() and p.suffix in TEXT}
+    out = {}
+    for f in sorted(files):
+        moved = inside(f)
+        f_new = new + f[len(old):] if moved else f
+        try:
+            text = (hub / f).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        def fix(target):
+            if re.match(r"^(?:[a-zA-Z][\w+.-]*:|[#/{<$])", target):
+                return None  # a URL, an anchor, a site-absolute path or a template placeholder
+            cut = min([i for i in (target.find("#"), target.find("?")) if i >= 0] or [len(target)])
+            path, rest = target[:cut], target[cut:]
+            plain = urllib.parse.unquote(path)
+            if not plain:
+                return None
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(f), plain))
+            # by path alone: the target may be absent here (repos/ in another clone, a report to come)
+            if resolved.startswith("../") or not (moved or inside(resolved)):
+                return None
+            goal = new + resolved[len(old):] if inside(resolved) else resolved
+            rel = posixpath.relpath(goal, posixpath.dirname(f_new) or ".")
+            if plain.endswith("/") and not rel.endswith("/"):
+                rel += "/"
+            if plain != path:
+                rel = urllib.parse.quote(rel, safe="/")
+            return None if rel == path else rel + rest
+
+        def swap(m):
+            pre, target = (m.group(1), m.group(2)) if m.group(1) is not None else (m.group(3), m.group(4))
+            fixed = fix(target)
+            return m.group(0) if fixed is None else pre + fixed
+
+        new_text = mention.sub(new, LINK_RX.sub(swap, text))
+        if new_text != text or moved:
+            out[f_new] = new_text
+    return out
+
+
+def move_task(hub, s, key, to_archive, ticket_status, absorbed=None):
+    if not s["_key_rx"].match(key):
+        raise Decide("%s does not match tasks.key_regex %s" % (key, s["key_regex"]))
+    open_, archived = hub / s["dir"] / key, hub / s["dir"] / s["archive"] / key
+    src, dst = (open_, archived) if to_archive else (archived, open_)
+    if not src.is_dir():
+        raise Decide("no folder %s - %s" % (src.relative_to(hub).as_posix(),
+                                            "already archived?" if to_archive else "not archived"))
+    if dst.exists():
+        raise Decide("%s already exists - ask before touching it" % dst.relative_to(hub).as_posix())
+    if absorbed:
+        absorbed = absorbed.replace("\\", "/").strip("/")
+        if not (hub / absorbed).exists():
+            raise Decide("--absorbed-into %s does not exist in the hub" % absorbed)
+    old, new = src.relative_to(hub).as_posix(), dst.relative_to(hub).as_posix()
+    plan = relink(hub, old, new)
+    before = {f: (hub / (old + f[len(new):] if f.startswith(new + "/") else f)).read_text(encoding="utf-8")
+              for f in plan}
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    if src.parent != hub / s["dir"] and not any(src.parent.iterdir()):
+        src.parent.rmdir()  # the last archived task left: no empty archive folder behind
+    today = datetime.date.today().isoformat()
+    desc = new + "/description.md"
+    if (hub / desc).is_file():
+        text = plan.get(desc, (hub / desc).read_text(encoding="utf-8"))
+        if not to_archive:
+            status = "Reopened"
+        elif absorbed:
+            status = "Absorbed into [%s](%s)" % (absorbed, posixpath.relpath(absorbed, new))
+        else:
+            status = "Done"
+        text = set_field(text, "Status", status)
+        text = set_field(text, "Ticket status", "%s, checked %s" % (ticket_status, today))
+        plan[desc] = set_field(text, "Last updated", today)
+    changed = []
+    for f, text in sorted(plan.items()):
+        if text != before.get(f):
+            (hub / f).write_text(text, encoding="utf-8")
+            changed.append(f)
+    return {"key": key, "from": old, "to": new, "status": header_field(plan.get(desc, ""), "Status"),
+            "changed": [f for f in changed if not f.startswith(new + "/")],
+            "changed_inside": [f for f in changed if f.startswith(new + "/")],
+            "has_report": (dst / "report.md").is_file()}
+
+
+def record_status(hub, s, key, ticket_status):
+    folder, archived = task_folder(hub, s, key)
+    desc = folder / "description.md"
+    if not desc.is_file():
+        raise Decide("no %s" % desc.relative_to(hub).as_posix())
+    text = desc.read_text(encoding="utf-8")
+    new = set_field(text, "Ticket status", "%s, checked %s" % (ticket_status, datetime.date.today().isoformat()))
+    if new != text:
+        desc.write_text(new, encoding="utf-8")
+    return {"key": key, "path": desc.relative_to(hub).as_posix(), "archived": archived, "changed": new != text}
+
+
 # ── main ──────────────────────────────────────────────────────────────
 
 
@@ -340,6 +559,17 @@ def main():
     v = sub.add_parser("verify")
     v.add_argument("key")
     v.add_argument("--no-fetch", action="store_true")
+    sub.add_parser("tasks")
+    st = sub.add_parser("status")
+    st.add_argument("key")
+    st.add_argument("ticket_status")
+    ar = sub.add_parser("archive")
+    ar.add_argument("key")
+    ar.add_argument("ticket_status")
+    ar.add_argument("--absorbed-into", default=None, help="the spec (hub path) that carries this task's account")
+    rs = sub.add_parser("restore")
+    rs.add_argument("key")
+    rs.add_argument("ticket_status")
     a = ap.parse_args()
 
     hub = Path(a.hub).resolve()
@@ -355,6 +585,14 @@ def main():
             out = links(hub, s, a.key)
         elif a.cmd == "finalize":
             out = finalize(hub, s, a.draft, a.key)
+        elif a.cmd == "tasks":
+            out = list_tasks(hub, s)
+        elif a.cmd == "status":
+            out = record_status(hub, s, a.key, a.ticket_status)
+        elif a.cmd == "archive":
+            out = move_task(hub, s, a.key, True, a.ticket_status, a.absorbed_into)
+        elif a.cmd == "restore":
+            out = move_task(hub, s, a.key, False, a.ticket_status)
         else:
             rows, push, on = verify(hub, s, a.key, fetch=not a.no_fetch)
             print("\n".join(rows))

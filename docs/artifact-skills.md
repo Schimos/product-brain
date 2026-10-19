@@ -202,7 +202,7 @@ the file.
 
 Work smaller than a spec, one folder per ticket. Without this block a hub has no tasks folder,
 and `pb check` reports one as outside the layout. `pb check` and `hub-portal` read only `dir`,
-`key_regex` and `drafts`; the rest is for the `task-workflow` skills, and
+`key_regex`, `drafts` and `archive`; the rest is for the `task-workflow` skills, and
 `plugins/task-workflow/scripts/task-facts.py config` prints the resolved values.
 
 | Key | Required? | Default | Example |
@@ -210,7 +210,8 @@ and `pb check` reports one as outside the layout. `pb check` and `hub-portal` re
 | `dir` | Yes | — | `"tasks"` — a top-level folder; `pb check` allows everything under it |
 | `key_regex` | Yes | — | `"^PROJ-\\d+$"` — a ticketed task is `<dir>/<KEY>/`, named by the key alone; the portal lists only folders that match. End it with the issue number |
 | `drafts` | No | `"drafts"` | Where tasks without a ticket yet go: `<dir>/<drafts>/<slug>/`, one folder per draft, so several can wait at once. When a ticket is created, its folder moves to `<dir>/<KEY>/` |
-| `tracker` | For `task-ticket` | — | `{"kind": "jira", "url": "https://jira.example.com", "project": "PROJ"}`; `kind` is `jira`, `gitlab` or `github`. Optional `types`, `fields`, `setup`: see `plugins/task-workflow/references/trackers.md` |
+| `archive` | No | `"archive"` | Where `task-archive` moves a task once its ticket is done: `<dir>/<archive>/<KEY>/`. Every task skill still finds it there, and the portal lists it apart, folded |
+| `tracker` | For `task-ticket` | — | `{"kind": "jira", "url": "https://jira.example.com", "project": "PROJ"}`; `kind` is `jira`, `gitlab` or `github`. Optional `types`, `fields`, `done`, `setup`: see `plugins/task-workflow/references/trackers.md` |
 | `placeholder` | No | `"<tracker.project>-NNN"`, else `"KEY-NNN"` | The key written into a draft's files until the ticket exists |
 | `branch` | No | `"{key_lower}"` | `"task/{key_lower}"` — the task branch; `{key}`, `{key_lower}`, `{n}` (the issue number) |
 | `base_branch` | No | `releases.integration_branch`, else `"main"` | where task branches start and merge |

@@ -149,6 +149,7 @@ Then the next steps:
 1. `/task-plan <KEY>` if there is no `plan.md` yet.
 2. Move the ticket to In Progress (the user does it; this skill does not).
 3. Implement from `plan.md`.
+4. Once the ticket is done, `/task-archive` moves the folder to the archive.
 
 ## Update mode: `/task-ticket <KEY>`
 

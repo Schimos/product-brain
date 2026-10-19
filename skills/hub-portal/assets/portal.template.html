@@ -620,17 +620,22 @@ footer { max-width: var(--maxw); margin: 0 auto; padding-inline: var(--gutter); 
       return '<tr><td class="num">' + esc(num) + '</td><td><div class="nm" dir="auto">' + esc(s.name) + '</div><div class="mono muted" style="font-size:11px">' + esc(s.key) + "</div></td>" +
         '<td><span class="pill ' + st.pill + '">' + esc(st.label) + '</span></td><td class="small">' + esc(s.note) + '</td><td><div class="docs">' + files + "</div></td></tr>";
     }).join("");
-    var tasks = (AUTO.tasks || []).map(function (t) {
+    var taskRow = function (t) {
       return '<div class="toolbar"><b>' + esc(t.key) + '</b><span class="small muted" dir="auto">' + esc(t.note) + "</span>" +
         t.docs.map(function (x) { return docBtn(x[0], x[1]); }).join("") + "</div>";
-    }).join("");
+    };
+    var openTasks = (AUTO.tasks || []).filter(function (t) { return !t.archived; });
+    var doneTasks = (AUTO.tasks || []).filter(function (t) { return t.archived; });
+    var tasks = openTasks.map(taskRow).join("") + (doneTasks.length ?
+      '<details><summary class="small">Archived: ' + doneTasks.length + " done</summary>" +
+        '<div style="display:grid;gap:10px;margin-top:10px">' + doneTasks.map(taskRow).join("") + "</div></details>" : "");
     el.innerHTML =
       '<div class="sechead"><div><h2>Feature specs</h2><p class="lede">' + esc(DATA.specsLede || "") + "</p></div>" +
       (DATA.specsLink ? extBtn(artUrl(DATA.specsLink.id), DATA.specsLink.label) : "") + "</div>" +
       '<div class="tally">' + tally + "</div>" +
       '<div class="tablewrap"><table class="specs"><thead><tr><th>#</th><th>Feature</th><th>State</th><th>Where it is</th><th>Documents</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
       (AUTO.tasks ? '<div class="card" style="display:grid;gap:10px"><h3>Task-size work</h3><p class="small" style="margin:0">' + esc(DATA.tasksLede || "") +
-        (AUTO.tasks.length ? "" : " None are in the hub right now.") + "</p>" + tasks + "</div>" : "");
+        (openTasks.length ? "" : " None are open right now.") + "</p>" + tasks + "</div>" : "");
   };
 
   /* ── Workflows ─────────────────────────────────────── */

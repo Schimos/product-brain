@@ -111,7 +111,9 @@ Set Status from the rule in the template; the first match wins:
 3. `Ready for plan`: everything else is done.
 
 `/task-plan` will not start until the description is `Ready for plan`. That is deliberate: a plan
-built on an unapproved UI gets redone.
+built on an unapproved UI gets redone. `Done`, `Absorbed into <spec>` and `Reopened` belong to
+`/task-archive`, which sets them from the ticket; this skill never writes them, and a `Reopened`
+description gets its Status worked out again here, in update mode.
 
 Show the writer the description and the mockup links. A ticketed task's `description.md` and
 `mockups/` go to the hub before the ticket moves to In Progress, so offer to commit and push

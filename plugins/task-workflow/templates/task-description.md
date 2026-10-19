@@ -22,7 +22,8 @@ something else, give both.
 | Repos | <repo ids from brain.config.json that change> |
 | Apps | <the apps or panels a user sees the change in, as the hub's conventions name them> · none |
 | Size | Task: one ticket, no new user stories, no change across domains. If this stops being true, the work becomes a spec. |
-| Status | Draft · Waiting for UI approval · Ready for plan |
+| Status | Draft · Waiting for UI approval · Ready for plan · Done · Absorbed into [<spec>](<link>) · Reopened |
+| Ticket status | <the tracker's status>, checked YYYY-MM-DD (written by /task-archive) |
 | Last updated | YYYY-MM-DD |
 
 <!--
@@ -30,6 +31,12 @@ Status: the first match wins.
 1. Draft: an open question that changes a criterion or a UI row, or a requested mockup not built yet.
 2. Waiting for UI approval: every requested mockup is published, and at least one row is not Approved.
 3. Ready for plan: everything else is done.
+After the ticket closes, /task-archive sets it and moves the folder to <tasks.dir>/<tasks.archive>/<KEY>/:
+4. Done: the ticket is done and the task's own report.md (if any) is its account.
+5. Absorbed into <spec>: the ticket is done and a feature spec delivered it; the spec carries the
+   account, so the task has no report.md of its own.
+6. Reopened: an archived task whose ticket was reopened. Run /task-description in update mode to
+   work out its Status again.
 -->
 
 ## Problem

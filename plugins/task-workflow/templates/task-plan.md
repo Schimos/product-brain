@@ -136,4 +136,6 @@ The agent implementing this plan:
    environment URL.
 7. Writes `report.md` in the task's folder from the hub's `templates/task-report.md`, with every
    section filled in. It pushes the report to the hub, and links it from each merge request,
-   before the ticket leaves In Progress.
+   before the ticket leaves In Progress. A task delivered inside a feature spec instead (one
+   merge request for several tasks) writes no report of its own: the spec carries the account,
+   and `/task-archive` records `Absorbed into <spec>` once the ticket is done.

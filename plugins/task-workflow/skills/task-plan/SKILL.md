@@ -98,7 +98,7 @@ Show the user the plan, then the next steps:
    it only when the user says so (`/task-ticket` asks, for a new ticket).
 3. Move the ticket to In Progress (the user does; no skill here moves a ticket).
 4. Implement from `plan.md`. The implementing agent follows its Definition of done and writes
-   `report.md`.
+   `report.md` (or, when a feature spec absorbs the task, the spec carries the account).
 5. Playground only: after a team member (the writer by default) confirms the deployed result,
    run `/quality-gate <KEY>`.
 

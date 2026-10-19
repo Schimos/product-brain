@@ -815,16 +815,19 @@ LAYOUT_HELP = """Where things go in a Product Brain hub:
 
 TASKS_HELP = """
   - task work -> {dir}/<KEY>/, named by the ticket key alone; a draft with no key yet ->
-    {dir}/{drafts}/<slug>/, one folder per draft, moved to {dir}/<KEY>/ when its ticket exists"""
+    {dir}/{drafts}/<slug>/, one folder per draft, moved to {dir}/<KEY>/ when its ticket exists;
+    a task whose ticket is done -> {dir}/{archive}/<KEY>/ (/task-archive moves it)"""
 
 
 def tasks_config(cfg: dict) -> dict:
     """The hub's task folders, or {} when it has none: `tasks` in brain.config.json, else the older
-    `portal.tasks`. dir/<KEY>/ is a ticketed task; dir/<drafts>/<slug>/ is a draft without a key."""
+    `portal.tasks`. dir/<KEY>/ is a ticketed task; dir/<drafts>/<slug>/ is a draft without a key;
+    dir/<archive>/<KEY>/ is a task whose ticket is done."""
     t = cfg.get("tasks") or (cfg.get("portal") or {}).get("tasks") or {}
     if not (isinstance(t, dict) and isinstance(t.get("dir"), str) and t["dir"].strip("/")):
         return {}
-    return {**t, "dir": t["dir"].strip("/"), "drafts": (t.get("drafts") or "drafts").strip("/")}
+    return {**t, "dir": t["dir"].strip("/"), "drafts": (t.get("drafts") or "drafts").strip("/"),
+            "archive": (t.get("archive") or "archive").strip("/")}
 
 
 def _config_doc_dirs(v) -> set:
@@ -996,7 +999,8 @@ def selftest():
             "portal": {"specs_dir": "specs/"}}
     assert layout_problems(work, ["specs/001-a/spec.md", "tasks/CH-1/plan.md",
                                   "tasks/drafts/sms-limit/description.md",
-                                  "tasks/drafts/otp-retry/description.md", "tasks.md",
+                                  "tasks/drafts/otp-retry/description.md",
+                                  "tasks/archive/CH-2/description.md", "tasks.md",
                                   "jobs/x.md"]) == ["tasks.md", "jobs/x.md"]
     legacy = {"portal": {"tasks": {"dir": "work/items", "key_regex": "^P-\\d+$"}},
               "roadmap": {"specs_dir": "docs/specs"}}
